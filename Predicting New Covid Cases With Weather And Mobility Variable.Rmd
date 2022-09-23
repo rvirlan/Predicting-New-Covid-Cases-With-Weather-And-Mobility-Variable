@@ -1,0 +1,1410 @@
+---
+title: Predicting_New_Covid_Cases_With_Weather_And_Mobility_Variable
+output: html_document
+---
+
+# CS5811 Distributed Data Analysis
+
+
+------------------------------------------------------------------------
+
+
+```{r}
+
+#JEF
+
+# installing required packages.
+#install.packages ('tidyverse')
+#install.packages('RCulr')
+#install.packages('ggpubr')
+#install.packages('validate')
+#install.packages('dlookr')
+#install.packages('randomForest') 
+
+
+
+#loading libraries into memory
+library(RCurl)
+library(ggplot2)
+library(dplyr)
+library(GGally)
+library(validate)
+library(dlookr)
+library(ggcorrplot)
+library(PerformanceAnalytics)
+library(fpc)
+library(NbClust)
+library(cluster)
+library(factoextra)
+library(randomForest) 
+
+```
+
+## Downloading data
+
+-   Retrieving GOOGLE MOBILITY DATA
+
+```{r}
+
+#JEF
+
+#creating temp file
+temp <- tempfile()
+
+#downloading google mobility data to temp file
+download.file('https://www.gstatic.com/covid19/mobility/Region_Mobility_Report_CSVs.zip', temp)
+
+#unzipping temp file
+unzip(temp)
+
+#reading in google mobility data
+mob_data <- read.csv('2020_GB_Region_Mobility_Report.csv')
+
+#removing temp file
+unlink(temp)
+
+#printing out header of mob data
+head(mob_data)
+
+```
+
+-   Retrieving London TFL DATA
+
+```{r}
+#JeF
+
+#downloading tfl data
+
+tfl_data <- read.csv('https://data.london.gov.uk/download/public-transport-journeys-type-transport/06a805f6-77c6-481a-8b08-ddef56afffdd/tfl-journeys-type.csv')
+
+#printing out tfl data
+tail(tfl_data)
+
+```
+
+-   Retrieving GLA COVID-19 data
+
+```{r}
+
+#JEF
+
+#downloading covid data
+
+covid_data = read.csv('https://data.london.gov.uk/download/coronavirus--covid-19--cases/151e497c-a16e-414e-9e03-9e428f555ae9/phe_cases_london_boroughs.csv')
+
+#printing out tail of covid data
+tail(covid_data)
+```
+
+-   Retrieving LONDON WEATHER DATA
+
+```{r}
+
+#Jef
+
+#downloading weather data
+
+weather_data = read.csv('https://raw.githubusercontent.com/JefNtungila/cs5811/main/weather_data_london.csv')
+
+#printing out tail of weather data
+tail(weather_data)
+```
+
+## Data Cleaning and Wrangling
+
+-   Filter and clean **mob_data** in proper conditions
+
+```{r}
+
+#Xuxiang
+
+# filter mob_data(sub_region_1 == Greater London)
+mob_data <- subset(mob_data, sub_region_1 == "Greater London")
+## check with dimention
+dim(mob_data)
+
+# filter from date(from 2020-Jan-1st)
+## first check with the data type of date
+### note: date is char, so need to convert to Date
+summary(mob_data)  
+
+## convert to Date
+### note: minimal date is 2020-02-15 not the require(2020-01-01), so we use the minimal date.(no action should be done)
+mob_data$date <- as.Date(mob_data$date)
+summary(mob_data$date)
+
+## cleaning data
+### note: many variable has NA
+summary(mob_data)
+mob_data_NA_count <- apply(is.na(mob_data),2,sum)
+mob_data_NA_count
+
+# use the median value to replace NA's
+## first calculate the median value
+median_retail_and_recreation_percent_change_from_baseline <- median(mob_data$retail_and_recreation_percent_change_from_baseline, na.rm = T)
+
+median_grocery_and_pharmacy_percent_change_from_baseline <- median(mob_data$grocery_and_pharmacy_percent_change_from_baseline, na.rm = T)
+
+median_parks_percent_change_from_baseline <- median(mob_data$parks_percent_change_from_baseline, na.rm = T)
+
+median_workplaces_percent_change_from_baseline <- median(mob_data$workplaces_percent_change_from_baseline, na.rm = T)
+
+median_residential_percent_change_from_baseline <- median(mob_data$residential_percent_change_from_baseline, na.rm = T)
+
+## next replace the NA's
+mob_data[is.na(mob_data$retail_and_recreation_percent_change_from_baseline), 'retail_and_recreation_percent_change_from_baseline'] = median_retail_and_recreation_percent_change_from_baseline
+
+mob_data[is.na(mob_data$grocery_and_pharmacy_percent_change_from_baseline), 'grocery_and_pharmacy_percent_change_from_baseline'] = median_grocery_and_pharmacy_percent_change_from_baseline
+
+mob_data[is.na(mob_data$parks_percent_change_from_baseline), 'parks_percent_change_from_baseline'] = median_parks_percent_change_from_baseline
+
+mob_data[is.na(mob_data$workplaces_percent_change_from_baseline), 'workplaces_percent_change_from_baseline'] = median_workplaces_percent_change_from_baseline
+
+mob_data[is.na(mob_data$residential_percent_change_from_baseline), 'residential_percent_change_from_baseline'] = median_residential_percent_change_from_baseline
+
+## aggregate by date to a new dataset with the sum of each percent_change
+#library(dplyr)
+
+aggrdate_mob <- group_by(mob_data, date)
+
+mob_data <- summarise(aggrdate_mob,
+          retail_and_recreation_percent_change_from_baseline = round(sum(retail_and_recreation_percent_change_from_baseline)/34, 0),
+          grocery_and_pharmacy_percent_change_from_baseline = round(sum(grocery_and_pharmacy_percent_change_from_baseline)/34, 0),
+          parks_percent_change_from_baseline = round(sum(parks_percent_change_from_baseline)/34, 0),
+          transit_stations_percent_change_from_baseline = round(sum(transit_stations_percent_change_from_baseline)/34, 0),
+          workplaces_percent_change_from_baseline = round(sum(workplaces_percent_change_from_baseline)/34, 0),
+          residential_percent_change_from_baseline = round(sum(residential_percent_change_from_baseline)/34, 0),
+          )
+
+summary(mob_data)
+
+#####################################
+##  mob_data is ok(with cleaning)  ##
+#####################################
+```
+
+-   Filter **tfl_data** in proper conditions
+
+```{r}
+
+#Xuxiang
+
+# filter with date
+### note: the Period.beginning and Period.ending variable are char type
+summary(tfl_data)
+
+## convert to Date
+tfl_data$Period.beginning <- as.Date(tfl_data$Period.beginning, format = "%d-%b-%y")
+tfl_data$Period.ending <- as.Date(tfl_data$Period.ending, format = "%d-%b-%y")
+summary(tfl_data$Period.beginning)
+summary(tfl_data$Period.ending)
+
+## filter
+tfl_data <- subset(tfl_data, Period.beginning >= "2020-01-01")
+
+# Try to convert PERIOD to a continuous date
+## NB: start: 2020-01-05   end: 2020-12-12
+## setting the start and end date
+start_date <- as.Date("2020-01-05")
+end_date <- as.Date("2020-12-12")
+
+## setting the time interval
+ndays <- end_date - start_date + 1
+
+## Generate Sequence
+date <- seq(from = start_date, by = 1, length.out = ndays)
+
+## Deposit a new variable as a data frame
+tfl_data_date <- data.frame(date)
+
+# expand Bus.journeys..m.
+Bus_1 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[1],28)
+Bus_2 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[2],28)
+Bus_3 <- rep(round(tfl_data$Bus.journeys..m./31, 2)[3],31)
+Bus_4 <- rep(round(tfl_data$Bus.journeys..m./32, 2)[4],32)
+Bus_5 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[5],28)
+Bus_6 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[6],28)
+Bus_7 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[7],28)
+Bus_8 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[8],28)
+Bus_9 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[9],28)
+Bus_10 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[10],28)
+Bus_11 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[11],28)
+Bus_12 <- rep(round(tfl_data$Bus.journeys..m./tfl_data$Days.in.period, 2)[12],28)
+
+tfl_data_Bus.journeys..m. <- data.frame(c(Bus_1, Bus_2, Bus_3, Bus_4, Bus_5, Bus_6, Bus_7, Bus_8, Bus_9, Bus_10, Bus_11, Bus_12))
+
+# expand Underground.journeys..m.
+Underground_1 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[1],28)
+Underground_2 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[2],28)
+Underground_3 <- rep(round(tfl_data$Underground.journeys..m./31, 2)[3],31)
+Underground_4 <- rep(round(tfl_data$Underground.journeys..m./32, 2)[4],32)
+Underground_5 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[5],28)
+Underground_6 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[6],28)
+Underground_7 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[7],28)
+Underground_8 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[8],28)
+Underground_9 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[9],28)
+Underground_10 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[10],28)
+Underground_11 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[11],28)
+Underground_12 <- rep(round(tfl_data$Underground.journeys..m./tfl_data$Days.in.period, 2)[12],28)
+
+tfl_data_Underground.journeys..m. <- data.frame(c(Underground_1, Underground_2, Underground_3, Underground_4, Underground_5, Underground_6, Underground_7, Underground_8, Underground_9, Underground_10, Underground_11, Underground_12))
+
+# expand DLR.journeys..m.
+DLR_1 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[1],28)
+DLR_2 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[2],28)
+DLR_3 <- rep(round(tfl_data$DLR.Journeys..m./31, 2)[3],31)
+DLR_4 <- rep(round(tfl_data$DLR.Journeys..m./32, 2)[4],32)
+DLR_5 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[5],28)
+DLR_6 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[6],28)
+DLR_7 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[7],28)
+DLR_8 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[8],28)
+DLR_9 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[9],28)
+DLR_10 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[10],28)
+DLR_11 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[11],28)
+DLR_12 <- rep(round(tfl_data$DLR.Journeys..m./tfl_data$Days.in.period, 2)[12],28)
+
+tfl_data.DLR.journeys..m. <- data.frame(c(DLR_1, DLR_2, DLR_3, DLR_4, DLR_5, DLR_6, DLR_7, DLR_8, DLR_9, DLR_10, DLR_11, DLR_12))
+
+# expand Tram.journeys..m.
+Tram_1 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[1],28)
+Tram_2 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[2],28)
+Tram_3 <- rep(round(tfl_data$Tram.Journeys..m./31, 2)[3],31)
+Tram_4 <- rep(round(tfl_data$Tram.Journeys..m./32, 2)[4],32)
+Tram_5 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[5],28)
+Tram_6 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[6],28)
+Tram_7 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[7],28)
+Tram_8 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[8],28)
+Tram_9 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[9],28)
+Tram_10 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[10],28)
+Tram_11 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[11],28)
+Tram_12 <- rep(round(tfl_data$Tram.Journeys..m./tfl_data$Days.in.period, 2)[12],28)
+
+tfl_data_Tram.journeys..m. <- data.frame(c(Tram_1, Tram_2, Tram_3, Tram_4, Tram_5, Tram_6, Tram_7, Tram_8, Tram_9, Tram_10, Tram_11, Tram_12))
+
+
+# expand Overground.journeys..m.
+Overground_1 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[1],28)
+Overground_2 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[2],28)
+Overground_3 <- rep(round(tfl_data$Overground.Journeys..m./31, 2)[3],31)
+Overground_4 <- rep(round(tfl_data$Overground.Journeys..m./32, 2)[4],32)
+Overground_5 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[5],28)
+Overground_6 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[6],28)
+Overground_7 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[7],28)
+Overground_8 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[8],28)
+Overground_9 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[9],28)
+Overground_10 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[10],28)
+Overground_11<- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[11],28)
+Overground_12 <- rep(round(tfl_data$Overground.Journeys..m./tfl_data$Days.in.period, 2)[12],28)
+
+tfl_data_Overground.journeys..m. <- data.frame(c(Overground_1, Overground_2, Overground_3, Overground_4, Overground_5, Overground_6, Overground_7, Overground_8, Overground_9, Overground_10, Overground_11, Overground_12))
+
+# expand Emirates.Airline.journeys..m.(will not use this variable, it's useless)
+
+# expand TFL.Rail.journeys..m.
+TFL.Rail_1 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[1],28)
+TFL.Rail_2 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[2],28)
+TFL.Rail_3 <- rep(round(tfl_data$TfL.Rail.Journeys..m./31, 2)[3],31)
+TFL.Rail_4 <- rep(round(tfl_data$TfL.Rail.Journeys..m./32, 2)[4],32)
+TFL.Rail_5 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[5],28)
+TFL.Rail_6 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[6],28)
+TFL.Rail_7 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[7],28)
+TFL.Rail_8 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[8],28)
+TFL.Rail_9 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[9],28)
+TFL.Rail_10 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[10],28)
+TFL.Rail_11 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[11],28)
+TFL.Rail_12 <- rep(round(tfl_data$TfL.Rail.Journeys..m./tfl_data$Days.in.period, 2)[12],28)
+
+tfl_data_TFL.Rail.journeys..m. <- data.frame(c(TFL.Rail_1, TFL.Rail_2, TFL.Rail_3, TFL.Rail_4, TFL.Rail_5, TFL.Rail_6, TFL.Rail_7, TFL.Rail_8, TFL.Rail_9, TFL.Rail_10, TFL.Rail_11, TFL.Rail_12))
+
+# Now, combine these columns into the new tfl_data
+new_tfl_data <- data.frame(cbind(tfl_data_date, tfl_data_Bus.journeys..m., tfl_data_Underground.journeys..m., tfl_data.DLR.journeys..m., tfl_data_Tram.journeys..m., tfl_data_Overground.journeys..m., tfl_data_TFL.Rail.journeys..m.))
+
+# change columns name
+names(new_tfl_data) <- c("date", "Bus.journeys..m.", "Underground.journeys..m.", "DLR.journeys..m.", "Tram.journeys..m.", "Overground.journeys..m.", "TFL.Rail.journeys..m.")
+
+##############################################
+##   tfl_data is ok(To be a new_tfl_data)   ##
+##############################################
+```
+
+-   Filter **covid_data** in proper conditions
+
+```{r}
+# Xuxiang
+
+# check details
+## note: the Period.beginning variable is char type
+summary(covid_data)
+
+# convert the type of date from char to Date 
+covid_data$date <- as.Date(covid_data$date)
+
+
+#library(dplyr) ############# @Xuxiang dplyr is already loaded into the RMD FILE
+aggrdate_covid <- group_by(covid_data, date)
+covid_data <- summarise(aggrdate_covid, 
+                        new_cases = sum(new_cases),
+                        total_cases = sum(total_cases)
+                        )
+covid_data <- subset(covid_data, date >= "2020-02-15")
+
+summary(covid_data)
+
+##############################################
+##  covid_data is ok(Do not need cleaning)  ##
+##############################################
+```
+
+-   Cleaning the **weather_data**
+
+```{r}
+# Xuxiang 
+
+# check some details of this data set
+dim(weather_data)   ## 401 rows, 8 columns
+summary(weather_data) ## there are many NA's
+
+# convert date to Date
+weather_data$date <- as.Date (weather_data$DATE)
+
+# look how many NA's in this data set
+weather_data_NA_count <- apply(is.na(weather_data),2,sum)
+## percent
+### note: SNWD, TMAX and TMIN can be deleted, because they have few information, and it's not realistic to impute their values because these values can be collected from some weather-related websites
+weather_data_NA_count / nrow(weather_data)*100
+
+# now extract the attributes we want to use or we think will helpful(only 3 variables)
+weather_data <- weather_data[, c("date", "PRCP", "TAVG")]
+names(weather_data)[1] <- "date"
+
+# use the median value to impute the NA in prcp
+apply(is.na(weather_data),2,sum)
+weather_data[is.na(weather_data$prcp), "PRCP"] = median(weather_data$PRCP, na.rm = T)
+
+###################################
+##  weather_data is ok(cleaned)  ##
+###################################
+```
+
+-   Try to join **covid_data**, **mob_data**, **new_tfl_data** and **weather_data**
+
+```{r}
+# Xuxiang
+
+## Now try to join them
+mob_tfl_data <- merge(mob_data, new_tfl_data, by = "date")
+
+weather_covid_data <- merge(weather_data, covid_data, by = "date", all = F)
+
+mob_weather_covid_data <- merge(mob_tfl_data, weather_covid_data, by = "date")
+
+# check
+## note: the date period is start from 2020-02-15, and end at 2020-12-12, 302 rows, 17 columns
+View(mob_weather_covid_data)
+apply(is.na(mob_weather_covid_data),2,sum)
+
+
+###########################################
+##  Data Cleaning and Wrangling is done  ##
+###########################################
+
+```
+
+\#Possible research question: \# Impact of changes in population mobility and weather on the covid 19 increase in cases in London Greater Area?
+
+```{r}
+
+#Roxana
+
+names(mob_weather_covid_data)
+```
+
+```{r}
+
+#Roxana
+
+names(mob_weather_covid_data)<- c("date", "retail", "grocery_and_pharmacy", "parks", "transit", "workplaces", "residential", "bus_trips", "underground_trips", "dlr_trips", "tram_trips","overground_trips", "tfl_rail_trips", "prcp", "tavg", "new_cases", "total_cases")
+```
+
+# Exploratory data analysis
+
+```{r}
+
+#Roxana
+
+summary(mob_weather_covid_data)
+```
+
+```{r}
+
+#Roxana
+
+str(mob_weather_covid_data)
+```
+
+### Using histograms to look at some variable's distribution
+
+```{r}
+
+library(ggplot2)
+
+ggplot(data=mob_weather_covid_data, aes(x = new_cases)) + geom_histogram(bins=20) + theme_classic() + ggtitle('Histogram of new Covid cases')
+
+ggplot(data=mob_weather_covid_data, aes(x=prcp))+geom_histogram(bins=20) + theme_classic() +
+ggtitle('Histogram of Precipitation')
+
+ggplot(data=mob_weather_covid_data, aes(x=tavg))+geom_histogram(bins=20) + theme_classic() +
+ggtitle('Histogram of Average Temperature')
+
+ggplot(data=mob_weather_covid_data, aes(x=transit))+geom_histogram(bins=20) + theme_classic() +
+ggtitle('Histogram of transit')
+
+ggplot(data=mob_weather_covid_data, aes(x=parks))+geom_histogram(bins=20)+ theme_classic()+
+ggtitle('Histogram of parks')
+
+ggplot(data=mob_weather_covid_data, aes(x=residential))+geom_histogram(bins=20)+ theme_classic()+
+ggtitle('Histogram of residential')
+
+ggplot(data=mob_weather_covid_data, aes(x=retail))+geom_histogram(bins=20)+ theme_classic()+
+ggtitle('Histogram of retail')
+
+ggplot(data=mob_weather_covid_data, aes(x=workplaces))+geom_histogram(bins=20)+ theme_classic()+
+ggtitle('Histogram of workplaces')
+
+```
+
+### Using scatterplots visualisation to find relationship between the Number of Covid cases and other variables.
+
+```{r}
+ggplot(mob_weather_covid_data, aes(x=prcp, y=new_cases)) + geom_point(shape=1)  + geom_smooth(method=lm, col='red', se=FALSE,size=2) # hide the standard error bands by specifying se=FALSE
+
+ggplot(mob_weather_covid_data, aes(x=tavg, y=new_cases)) + geom_point(shape=1) +    
+geom_smooth(method=lm,  se=FALSE, col='red', size=2)
+
+ggplot(mob_weather_covid_data, aes(x=transit, y=new_cases)) +geom_point(shape=1) + geom_smooth(method=lm,  se=FALSE, col='red', size=2)
+
+ggplot(mob_weather_covid_data, aes(x=parks, y=new_cases)) + geom_point(shape=1)+
+geom_smooth(method=lm, se=FALSE, col='red', size=2)
+
+ggplot(mob_weather_covid_data, aes(x=residential, y=new_cases)) + geom_point(shape=1) +    
+geom_smooth(method=lm,  se=FALSE, col='red', size=2)
+
+ggplot(mob_weather_covid_data, aes(x=retail, y=new_cases)) + geom_point(shape=1) +    
+geom_smooth(method=lm,  se=FALSE, col='red', size=2)
+
+ggplot(mob_weather_covid_data, aes(x=workplaces, y=new_cases)) + geom_point(shape=1) +    
+geom_smooth(method=lm,  se=FALSE,col='red', size=2 )
+
+ggplot(mob_weather_covid_data, aes(x=bus_trips, y=new_cases)) + geom_point(shape=1) +    
+geom_smooth(method=lm,  se=FALSE,col='red', size=2 )
+
+
+
+
+```
+
+```{r}
+
+
+# choose the variable except date from mob_weather_covid_data
+except_date <- mob_weather_covid_data[, 2:17]
+
+### the codes below are all the tests
+mydata <- except_date[,2:15]  
+
+chart.Correlation (mydata, histogram=TRUE, pch=19)
+```
+
+### Correlation
+
+```{r}
+
+#Roxana
+
+#except_date <- mob_weather_covid_data[, 2:17]
+
+# Print the correlation coefficient table
+corr_coef <- cor(except_date, use="complete.obs")
+round(corr_coef,2)
+```
+##Roxana
+```{r}
+#plot the heat map
+ggcorrplot(corr_coef)
+
+```
+
+
+
+
+\#\#Using log transformation on the new_cases variable as it is heavily skewed.
+
+```{r}
+ggplot(mob_weather_covid_data)+geom_density(aes(x=new_cases)) +        scale_x_log10(breaks=c(100,1000,10000,100000))+annotation_logticks (sides="bt")
+```
+
+Hypothesis testing of whether or not parks has a significant influence on active covid cases. Null hypothesis is that the relationship is independent. P-value is significant and we fail to reject null hypothesis.
+
+Can draw regression line to show relationship
+
+```{r}
+#Jef
+
+# Verify if statically significant
+# null-hypothesis – the probability that there is no effect or relationship 
+
+cor_parks_new_cases <- cor.test(mob_weather_covid_data$parks, mob_weather_covid_data$new_cases, 
+                    method = "pearson")
+cor_parks_new_cases
+```
+
+```{r}
+
+#Jef
+
+#Verify if statically significant
+#null-hypothesis – the probability that there is no effect or relationship 
+
+cor_temp_new_cases <- cor.test(mob_weather_covid_data$tavg, mob_weather_covid_data$new_cases, 
+                    method = "pearson")
+cor_temp_new_cases
+```
+
+### K means clustering
+
+```{r}
+
+#Roxana
+
+
+## except_date <- mob_weather_covid_data[, 2:17]  ### It's as same as the variable "except_date" which is "Variables" @Roxana
+
+# Standardize the data
+except_date_scale <- scale(except_date)
+
+# Determine the number of clusters (except 'new_cases' and 'total_cases' column)
+## note:The plot suggests four clusters.
+num_k <- sapply(2:15,function(k){kmeans(except_date,k,nstart=20)$tot.withinss})
+plot(2:15, num_k, type="b", ylab=" Total Within Sum of Squares", xlab="Number of Clusters")
+```
+
+```{r}
+#Perform the k-means cluster analysis
+set.seed(123)
+except_date_clusters <- kmeans(except_date_scale, 4, nstart = 25)
+except_date_clusters$cluster
+except_date_clusters$centers
+except_date_clusters
+```
+
+### Evaluation of cluster results 3.1 silhoutte score
+
+```{r}
+fviz_nbclust(except_date, kmeans, method = "silhouette") +
+  labs(subtitle = "Silhouette method")
+```
+
+### Visualise the clusters fviz_cluster(except_date_clusters, data = except_date)
+
+```{r}
+
+fviz_cluster(except_date_clusters, data = except_date) 
+```
+
+### K means clustering first 6 columns
+
+```{r}
+# choose the first 6 columns
+google_mob <- except_date[, 1:6]
+
+# scale the dataset 
+google_mob_scale <- scale(google_mob)
+
+# 
+fviz_nbclust(google_mob_scale, kmeans, method = "wss") #optimal number of clusters(The location of a bend (knee) in the plot is generally considered as an indicator of the appropriate number of clusters.)
+
+
+set.seed(123)
+google_mob_clusters <- kmeans(google_mob_scale, 3, nstart = 25)
+summary(google_mob_clusters)
+google_mob_clusters$cluster
+google_mob_clusters$centers
+print(google_mob_clusters)
+google_mob_clusters$size
+
+# fviz_cluster(tflclusters, data = google)
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("retail", "grocery_and_pharmacy"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("retail", "parks"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("retail", "transit"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("retail", "workplaces"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("retail", "residential"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("retail", "parks"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("grocery_and_pharmacy", "parks"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("grocery_and_pharmacy", "transit"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("grocery_and_pharmacy", "workplaces"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("grocery_and_pharmacy", "residential"),stand = FALSE, ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("parks", "transit"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("parks", "workplaces"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("parks", "residential"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("transit", "workplaces"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("transit", "residential"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster (google_mob_clusters, data = google_mob_scale, choose.vars = c("workplaces", "residential"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+```
+
+```{r}
+par(mfrow=c(1, 1), mar=c(4, 4, 4, 2))
+myColors <- c("darkblue","red","green","brown","pink","purple")
+barplot(t(google_mob_clusters$centers), beside = TRUE, xlab="cluster", 
+ylab="value", col = myColors)
+legend("topleft", ncol=2, legend = c("retail", "grocery_and_pharmacy", "parks","transit", "workplaces", "residential"), fill = myColors)
+
+```
+
+### K means clustering tfl data
+
+```{r}
+# choose and Standardize
+tfl_mob <- except_date[,7:12]
+tfl_scale <- scale(tfl_mob)
+
+set.seed(123)
+fviz_nbclust(tfl_scale, kmeans, method = "wss")
+tfl_mob_clusters <- kmeans(tfl_scale, 3, nstart = 25)
+summary(tfl_mob_clusters)
+
+tfl_mob_clusters$cluster
+tfl_mob_clusters$centers
+tfl_mob_clusters$size
+tfl_mob_clusters
+
+fviz_cluster(tfl_mob_clusters, data = tfl_scale)
+par(mfrow=c(1, 1), mar=c(4, 4, 4, 2))
+myColors <- c("darkblue","red","green","brown","pink","purple")
+barplot(t(tfl_mob_clusters$centers), beside = TRUE, xlab="cluster", 
+ylab="value", col = myColors)
+legend("topleft", ncol=2, legend = c("bus_trips", "underground_trips", "dlr_trips","tram_trips", "overground_trips", "tfl_rail_trips"), fill = myColors)
+```
+
+### K means weather data
+
+```{r}
+# choose and Standardize
+weather <-except_date [,13:14]
+weather_scale <- scale(weather)
+
+
+set.seed(123)
+fviz_nbclust(weather_scale, kmeans, method = "wss")
+weather_clusters <- kmeans(weather_scale, 3, nstart = 25)
+summary(weather_clusters)
+
+weather_clusters$cluster
+weather_clusters$centers
+weather_clusters$size
+weather_clusters
+
+fviz_cluster(weather_clusters, data = weather_scale)
+
+```
+
+### K means first 12 columns(mobility)
+
+```{r}
+# choose and Standardize
+mobility <- except_date[,1:12]
+mobility_scale<- scale(mobility)
+
+set.seed(123)
+fviz_nbclust(mobility_scale, kmeans, method = "wss")
+mobility_clusters <- kmeans(mobility_scale, 3, nstart = 25)
+summary(mobility_clusters)
+
+mobility_clusters$cluster
+mobility_clusters$centers
+mobility_clusters$size
+mobility_clusters
+
+fviz_cluster(mobility_clusters, data = mobility_scale)
+```
+
+### K means mobility and weather
+
+```{r}
+# choose and Standardize
+mob_weather <- except_date[,1:14]
+mob_weather_scale<- scale(mob_weather)
+
+set.seed(123)
+fviz_nbclust(mob_weather_scale, kmeans, method = "wss")
+mob_weather_clusters <- kmeans(mob_weather_scale, 3, nstart = 25)
+summary(mob_weather_clusters)
+
+mob_weather_clusters$cluster
+mob_weather_clusters$centers
+mob_weather_clusters$size
+mob_weather_clusters
+
+fviz_cluster(mob_weather_clusters, data = mob_weather_scale)
+```
+
+### K means mobility and covid
+
+```{r}
+# choose and Standardize
+mob_covid <- except_date[, c(-13,-14)]
+mob_covid_scale<- scale(mob_covid)
+
+set.seed(123)
+fviz_nbclust(mob_covid_scale, kmeans, method = "wss")
+mob_covid_clusters <- kmeans(mob_covid_scale, 2, nstart = 25)
+summary(mob_covid_clusters)
+
+mob_covid_clusters$cluster
+mob_covid_clusters$centers
+mob_covid_clusters$size
+mob_covid_clusters
+
+fviz_cluster(mob_covid_clusters, data = mob_covid_scale)
+```
+
+### K means weather and covid
+
+```{r}
+# choose and Standardize
+weather_covid <- except_date[ , 13:16]
+weather_covid_scale<- scale(weather_covid)
+
+set.seed(123)
+fviz_nbclust(weather_covid_scale, kmeans, method = "wss")
+weather_covid_clusters <- kmeans(weather_covid_scale, 3, nstart = 25)
+summary(weather_covid_clusters)
+
+weather_covid_clusters$cluster
+weather_covid_clusters$centers
+weather_covid_clusters$size
+weather_covid_clusters
+
+fviz_cluster(weather_covid_clusters, data = weather_covid_scale)
+fviz_cluster(weather_covid_clusters, data = weather_covid_scale, choose.vars = c("prcp", "total_cases"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster(weather_covid_clusters, data = weather_covid_scale, choose.vars = c("tavg", "total_cases"),stand = FALSE,
+ellipse.type = "norm") + theme_bw()
+fviz_cluster(weather_covid_clusters, data = weather_covid_scale, choose.vars = c("prcp", "new_cases"),stand = FALSE, 
+ellipse.type = "norm") + theme_bw()
+fviz_cluster(weather_covid_clusters, data = weather_covid_scale, choose.vars = c("tavg", "new_cases"),stand = FALSE,
+ellipse.type = "norm") + theme_bw()
+par(mfrow=c(1, 1), mar=c(4, 4, 4, 2))
+myColors <- c("darkblue","red","green","brown")
+barplot(t(weather_covid_clusters$centers), beside = TRUE, xlab="cluster", 
+ylab="value", col = myColors)
+legend("topleft", ncol=2, legend = c("prcp", "tavg", "new_cases","total_cases"), fill = myColors)
+```
+
+## Machine Learning
+
+### Decision Trees
+
+```{r}
+
+#setting state of random sample so that it always takes same sample to have comparable results
+set.seed(42)
+
+
+#counting amount of rows
+n_rows <- nrow(mob_weather_covid_data)
+
+#sampling the data at 70/30
+training_rf <- sample(n_rows, n_rows * 0.7) 
+
+#selecting useful columns and sampled rows
+training_total_rf <- select(mob_weather_covid_data, 'retail': 'new_cases')[training_rf,]
+
+#selecting useful columns and sampled rows
+test_total_rf <- select(mob_weather_covid_data, 'retail': 'new_cases')[-training_rf,]
+```
+
+```{r}
+
+#creating the tree model with 3 branches at each node using training data
+
+total_rf <- randomForest(new_cases ~ ., data = training_total_rf, mtry = 3, 
+                         importance = TRUE, na.action = na.omit) 
+
+```
+
+```{r}
+
+#making predictions on the testing data
+
+pred = predict(total_rf, test_total_rf)
+```
+
+```{r}
+
+
+#using RMSE as a performance metric for this regression problem
+#RMSE is in the original dimension and is hence directly interpretable 
+
+
+RMSE = function(m, o){
+  sqrt(mean((m - o)^2))
+}
+
+model <- pred
+
+observed <- test_total_rf$new_cases
+
+RMSE(model, observed)
+```
+
+### Neural Networks
+
+```{r}
+#install.packages('neuralnet')
+library(neuralnet)
+```
+
+```{r}
+
+#creating the min max function to format our data between 0 and 1
+
+MinMax <- function(x){
+  tx <- (x - min(x)) / (max(x) - min(x))
+  return(tx)
+}
+```
+
+```{r}
+
+#applying the minmax function to our dataframe to preprocess the data
+
+total_minmax <- select(mob_weather_covid_data, 'retail': 'new_cases')
+
+total_minmax <- apply(total_minmax, 2, MinMax)
+
+total_minmax <- as.data.frame(total_minmax)
+
+
+
+```
+
+```{r}
+
+#setting state of random sample so that it always takes same sample to have comparable results
+set.seed(42)
+
+#counting amount of rows
+n_rows <- nrow(total_minmax)
+
+#sampling the data at 70/30
+training_idx <- sample(n_rows, n_rows * 0.7) 
+
+#selecting sampled rows
+training_total_minmax <- total_minmax[training_idx,]
+
+#selecting sampled rows
+test_total_minmax <- total_minmax[-training_idx,]
+```
+
+```{r}
+
+
+#setting up the dependent and independent variables
+total_formula = new_cases ~ retail + Grocery_and_Pharmacy + parks + transit + workplaces + residential+ bus_trips + Underground_trips + DLR_trips + Tram_trips + Overground_trips + Tfl_rail_trips + prcp + tavg
+
+#training the NN
+total_nn_5995 <- neuralnet(total_formula, hidden = c(5,9,9,5), data = training_total_minmax)
+
+
+
+```
+
+```{r}
+
+#making predictions on the testing data
+pred_total_nn <- compute(total_nn_5995, select(test_total_minmax, 'retail': 'tavg'))
+```
+
+```{r}
+
+#storing the predicted results in a dataframe
+
+total_results <- data.frame(
+  actual = test_total_minmax$new_cases,
+  nn_5995 = pred_total_nn$net.result
+)
+```
+
+```{r}
+
+#looking at the correlaton between the model predicted output and the actual observed data
+cor(total_results[,'actual'], total_results[,c( 'nn_5995')])
+```
+
+```{r}
+
+#using RMSE as a performance metric for this regression problem
+#RMSE is in the original dimension and is hence directly interpretable 
+
+RMSE = function(m, o){
+  sqrt(mean((m - o)^2))
+}
+
+model <- test_total_minmax$new_cases
+
+observed <- pred_total_nn$net.result
+
+RMSE(model, observed)
+
+
+
+```
+
+\#\#First Regression tree model
+
+\#\#Roxana
+
+```{r}
+library(rpart)
+set.seed(123)
+train_index <- sample(seq_len(nrow(mob_weather_covid_data)), size = 0.70*nrow(mob_weather_covid_data))
+mob_weather_covid_data_train<-mob_weather_covid_data[train_index, ]
+mob_weather_covid_data_test<-mob_weather_covid_data[-train_index, ]
+```
+
+```{r}
+mob_weather_covid_data.rt1<-rpart(log1p(new_cases)~ transit+parks+prcp+tavg+workplaces, data=mob_weather_covid_data_train)
+mob_weather_covid_data.rt1
+
+```
+
+```{r}
+##Visualising decision tree
+# install.packages("rpart.plot")
+library(rpart.plot)
+rpart.plot(mob_weather_covid_data.rt1, digits=3)
+
+```
+
+```{r}
+##a more detailed graph
+rpart.plot(mob_weather_covid_data.rt1, digits = 4, fallen.leaves = T, type=3, extra=101)
+
+```
+
+```{r}
+
+##to observe order and rule of splits 
+library(rattle)
+fancyRpartPlot(mob_weather_covid_data.rt1, cex = 0.8)
+```
+
+```{r}
+## Set of sub-trees of this tree and estimated their predictive performance.
+printcp(mob_weather_covid_data.rt1)
+```
+```{r}
+##cross validated error represented graphically
+plotcp(mob_weather_covid_data.rt1)
+
+
+```
+
+```{r}
+par(mfrow=c(1,2)) 
+rsq.rpart(mob_weather_covid_data.rt1)
+## The first graph shows that R-Squared improves as splits increases
+##The second chart shows how xerror decreases with each split and as it does not show a curve that starts to go up then this tree does not need pruning.
+```
+
+```{r}
+##Evaluating model performance
+##making predictions
+mob_weather_covid_data.pred<-predict(mob_weather_covid_data.rt1, mob_weather_covid_data_test)
+summary(mob_weather_covid_data.pred)
+
+```
+
+```{r}
+##converted the predicted results back from log1p with the exp function
+exp_pred <- expm1(mob_weather_covid_data.pred)
+summary(exp_pred)
+
+```
+
+```{r}
+summary(mob_weather_covid_data_test$new_cases)
+
+```
+
+\#\# Comparing the results of the summary it can be seen that predicted and the actual numbers are different.
+
+```{r}
+cor(exp_pred, mob_weather_covid_data_test$new_cases)
+## it is high corellation between predicted values and real values
+
+```
+
+```{r}
+##the difference between the predicted value and the
+##observed value on average is 301.3167
+MAE<-function(obs, pred){
+mean(abs(obs-pred))
+}
+MAE(mob_weather_covid_data_test$new_cases, exp_pred)
+```
+
+```{r}
+##Error scatter plot
+old.par <- par(mfrow = c(1, 2))
+plot(exp,mob_weather_covid_data_test$new_cases, main = "Regression Tree",
+xlab = "Predictions", ylab = "True Values")
+abline(0, 1, lty = 2)
+par(old.par)
+##The circles are not all on the dashed line meaning the prediction is not as good.
+
+
+```
+
+```{r}
+#variable importance
+mob_weather_covid_data.rt1$variable.importance
+
+```
+```{r}
+RMSE = function(m, o){
+  sqrt(mean((m - o)^2))
+}
+
+model <-  exp_pred
+
+observed <- mob_weather_covid_data_test$new_cases
+
+RMSE(model, observed)
+```
+
+`
+##2Improve the model by using other variables`
+
+```{r}
+mob_weather_covid_data.rt2 <- rpart(log1p(new_cases) ~ tavg+ workplaces+bus_trips+ underground_trips+ grocery_and_pharmacy+parks+transit, data=mob_weather_covid_data_train)
+mob_weather_covid_data.rt2
+```
+
+
+```{r}
+##a more detailed graph
+rpart.plot(mob_weather_covid_data.rt2, digits = 4, fallen.leaves = T, type=3, extra=101)
+```
+
+```{r}
+## Set of sub-trees of this tree and estimated their predictive performance.
+printcp(mob_weather_covid_data.rt2)
+```
+```{r}
+par(mfrow=c(1,2)) 
+rsq.rpart(mob_weather_covid_data.rt2)
+## The first graph shows that R-Squared improves as splits increases
+##The second chart shows how xerror decreases with each split and as it does not show a curve that starts to go up then this tree does not need pruning.
+```
+```{r}
+##Evaluating model performance
+##making predictions
+mob_weather_covid_data.pred2<-predict(mob_weather_covid_data.rt2, mob_weather_covid_data_test)
+summary(mob_weather_covid_data.pred2)
+```
+```{r}
+##converted the predicted results back from log1p with the exp function
+exp2_pred <- expm1(mob_weather_covid_data.pred2)
+summary(exp2_pred)
+```
+```{r}
+summary(mob_weather_covid_data_test$new_cases)
+```
+
+\#\# Comparing the results of the summary it can be seen that predicted and the actual numbers are close except the min and the max.
+
+```{r}
+cor(exp2_pred, mob_weather_covid_data_test$new_cases)
+## it is high corellation between predicted values and real values
+
+```
+
+```{r}
+##the difference between the predicted value and the
+##observed value on average is 183.1359
+MAE<-function(obs, pred){
+mean(abs(obs-pred))
+}
+MAE(mob_weather_covid_data_test$new_cases, exp2_pred)
+```
+
+```{r}
+##Error scatter plot
+old.par <- par(mfrow = c(1, 2))
+plot(exp2_pred, mob_weather_covid_data_test$new_cases, main = "Regression Tree",
+xlab = "Predictions", ylab = "True Values")
+abline(0, 1, lty = 2)
+par(old.par)
+##The circles are not all on the dashed line meaning the prediction is not as good.
+
+
+```
+
+```{r}
+#variable importance
+mob_weather_covid_data.rt2$variable.importance
+```
+
+```{r}
+#using RMSE as a performance metric for this regression problem
+#RMSE is in the original dimension and is hence directly interpretable 
+
+RMSE = function(m, o){
+  sqrt(mean((m - o)^2))
+}
+
+model <-  exp2_pred
+
+observed <- mob_weather_covid_data_test$new_cases
+
+RMSE(model, observed)
+
+```
+
+
+
+##The third regression tree model
+`
+```{r}
+library(rpart)
+set.seed(123)
+train_index <- sample(seq_len(nrow(mydata)), size = 0.70*nrow(mydata))
+mydata_train<-mydata[train_index, ]
+mydata_test<-mydata[-train_index, ]
+```
+```{r}
+mob_weather_covid_data.rt3<-rpart(log1p(new_cases) ~ tavg+ workplaces+bus_trips+ underground_trips+ grocery_and_pharmacy+parks+retail+residential+prcp, data=mob_weather_covid_data_train)
+mob_weather_covid_data.rt3
+```
+
+
+
+```{r}
+##a more detailed graph
+rpart.plot(mob_weather_covid_data.rt3, digits = 4, fallen.leaves = T, type=3, extra=101)
+```
+
+```{r}
+## Set of sub-trees of this tree and estimated their predictive performance.
+printcp(mob_weather_covid_data.rt3)
+```
+```{r}
+par(mfrow=c(1,2)) 
+rsq.rpart(mob_weather_covid_data.rt3)
+## The first graph shows that R-Squared improves as splits increases
+##The second chart shows how xerror decreases with each split and as it does not show a curve that starts to go up then this tree does not need pruning.
+```
+```{r}
+##Evaluating model performance
+##making predictions
+mob_weather_covid_data.p3<-predict(mob_weather_covid_data.rt3, mob_weather_covid_data_test)
+summary(mob_weather_covid_data.p3)
+```
+```{r}
+##converted the predicted results back from log1p with the exp function
+exp3_pred <- expm1(mob_weather_covid_data.p3)
+summary(exp3_pred)
+```
+```{r}
+summary(mob_weather_covid_data_test$new_cases)
+```
+
+\#\# Comparing the results of the summary it can be seen that predicted and the actual numbers are close except the min and the max.
+
+```{r}
+cor(exp3_pred, mob_weather_covid_data_test$new_cases)
+## it is high corellation between predicted values and real values
+
+```
+
+```{r}
+##the difference between the predicted value and the
+##observed value on average is 183.1359
+MAE<-function(obs, pred){
+mean(abs(obs-pred))
+}
+MAE(mob_weather_covid_data_test$new_cases, exp3_pred)
+```
+
+```{r}
+##Error scatter plot
+old.par <- par(mfrow = c(1, 2))
+plot(exp3_pred, mob_weather_covid_data_test$new_cases, main = "Regression Tree",
+xlab = "Predictions", ylab = "True Values")
+abline(0, 1, lty = 2)
+par(old.par)
+##The circles are not all on the dashed line meaning the prediction is not as good.
+
+
+```
+
+```{r}
+#variable importance
+mob_weather_covid_data.rt3$variable.importance
+```
+```{r}
+#using RMSE as a performance metric for this regression problem
+#RMSE is in the original dimension and is hence directly interpretable 
+
+
+RMSE = function(m, o){
+  sqrt(mean((m - o)^2))
+}
+
+model <-  exp3_pred
+
+observed <- mob_weather_covid_data_test$new_cases
+
+RMSE(model, observed)
+```
+##Random Forest
+
+```{r}
+library(randomForest)
+set.seed(123)
+```
+
+```{r}
+train_index <- sample(seq_len(nrow(mob_weather_covid_data)), size = 0.70*nrow(mob_weather_covid_data))
+mob_weather_covid_data_train<-mob_weather_covid_data[train_index, ]
+mob_weather_covid_data_test<-mob_weather_covid_data[-train_index, ]
+new_cases_formula=log1p(new_cases)~retail+grocery_and_pharmacy+parks+transit+workplaces+residential+bus_trips+underground_trips+dlr_trips+tram_trips+overground_trips+tfl_rail_trips+prcp+tavg
+```
+
+
+```{r}
+rf_mob_weather_covid_data <- randomForest(new_cases_formula, ntree = 500,myres=4, importance = T, data = mob_weather_covid_data_train,na.action = na.omit )
+```
+
+
+```{r}
+# plot the error rates
+
+plot(rf_mob_weather_covid_data)
+legend('topright', colnames(rf_mob_weather_covid_data$err.rate), bty = 'n', lty = c(1,2,3), col = c(1:3))
+```
+```{r}
+# plot the variable importance according to the
+varImpPlot(rf_mob_weather_covid_data, type = 1)
+```
+```{r}
+# compute the prediction for the random forest model
+#   note: the new_cases attribute (column 16) is excluded from the test data set
+rf_mob_weather_covid_data_pred <- predict(rf_mob_weather_covid_data, mob_weather_covid_data_test[,-16], type= "class")
+```
+
+
+```{r}
+rf_exp_pred<- expm1(rf_mob_weather_covid_data_pred)
+summary(rf_exp_pred)
+```
+```{r}
+summary(mob_weather_covid_data_test$new_cases)
+```
+
+```{r}
+# create a contingency table for the actual VS predicted for the random forest model
+rf_results_table <- table(rf = rf_exp_pred,  actual = mob_weather_covid_data_test$new_cases)
+rf_results_table
+```
+```{r}
+# calculate accuracy from each contigency table
+#   as sum of diagonal elements over sum of the matrix values
+acc_rf <- sum(diag(rf_results_table)) / sum(rf_results_table)
+acc_rf
+```
+```{r}
+##the difference between the predicted value and the
+##observed value on average is 140.0243
+MAE<-function(obs, pred){
+mean(abs(obs-pred))
+}
+MAE(mob_weather_covid_data_test$new_cases, rf_exp_pred)
+```
+```{r}
+#using RMSE as a performance metric for this regression problem
+#RMSE is in the original dimension and is hence directly interpretable 
+
+
+RMSE = function(m, o){
+  sqrt(mean((m - o)^2))
+}
+
+model_rf <- rf_exp_pred
+
+observed_rf <- mob_weather_covid_data_test$new_cases
+
+RMSE(model_rf, observed_rf)
+RSE <- function(pred, actual){
+mean((pred-actual)^2 / mean(mean(actual)-actual^2))
+}
+RSquare_rf<-1- RSE(model_rf, observed_rf)
+cor(model_rf, observed_rf)
+```
+##
+MAE
+rt1=301.4538
+rt2=182.9674
+rt3=174.097
+rf=140.0243
+
+RMSE
+rt1=585.6802
+rt2=366.1479
+rt3=354.6427
+rf=326.3558
+
+##Use of hive to calculate the results metrics and a data frame has been created
+`
+```{r}
+use_in_hadoop <- data.frame(actual=round(model_rf),
+                actual_avg=round(mean(model_rf)),
+                predicted=observed_rf)
+use_in_hadoop
+write.csv(use_in_hadoop,file="use_in_hadoop.csv", col.names=F, quote=F, row.names=F)
+getwd()
+```
+
+``{r}
+
+```
+
+
+
+\#\#References
+
+#Dinov I. D., ( 2018  ), Data Science and predictive analytics , Publisher: Springer, Cham, first edition, DOI: https://doi.org/10.1007/978-3-319-72347-1
+\#<https://www.statology.org/k-means-clustering-in-r>
+
+\#Nikita E.(2020)Introduction to statistics using R
+
+\#Kabacoff R.(2015)R in action w
+##Torgo L.,(2011) Data Mining with R Learning with Case Studies, Taylor and Francis Group,New York
+
+\#\#[R: Decision Trees (Regression) -- Analytics4All](https://analytics4all.org/2016/11/23/r-decision-trees-regression/)
